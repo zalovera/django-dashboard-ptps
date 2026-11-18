@@ -111,38 +111,127 @@ def safe_int_list(values):
 def index(request):
     base_qs = TagihanPasar.objects.all()
 
-    # ===== FILTER OPTIONS =====
-    tahun_opts = list(
-        base_qs.exclude(tahun__isnull=True)
-        .values_list("tahun", flat=True)
-        .distinct()
-        .order_by("tahun")
-    )
-    cabang_opts = list(
-        base_qs.exclude(cabang="")
-        .values_list("cabang", flat=True)
-        .distinct()
-        .order_by("cabang")
-    )
-    jenis_opts = list(
-        base_qs.exclude(jenis_tagihan="")
-        .values_list("jenis_tagihan", flat=True)
-        .distinct()
-        .order_by("jenis_tagihan")
-    )
-    pasar_opts = list(
-        base_qs.exclude(nama_pasar="")
-        .values_list("nama_pasar", flat=True)
-        .distinct()
-        .order_by("nama_pasar")
-    )
+    # # ===== FILTER OPTIONS =====
+    # tahun_opts = list(
+    #     base_qs.exclude(tahun__isnull=True)
+    #     .values_list("tahun", flat=True)
+    #     .distinct()
+    #     .order_by("tahun")
+    # )
+    # cabang_opts = list(
+    #     base_qs.exclude(cabang="")
+    #     .values_list("cabang", flat=True)
+    #     .distinct()
+    #     .order_by("cabang")
+    # )
+    # jenis_opts = list(
+    #     base_qs.exclude(jenis_tagihan="")
+    #     .values_list("jenis_tagihan", flat=True)
+    #     .distinct()
+    #     .order_by("jenis_tagihan")
+    # )
+    # pasar_opts = list(
+    #     base_qs.exclude(nama_pasar="")
+    #     .values_list("nama_pasar", flat=True)
+    #     .distinct()
+    #     .order_by("nama_pasar")
+    # )
 
-    # ===== SELECTED FILTER =====
-    tahun_selected = safe_int_list(request.GET.getlist("tahun")) or [int(x) for x in tahun_opts]
-    cabang_selected = request.GET.getlist("cabang") or cabang_opts
-    jenis_selected = request.GET.getlist("jenis") or jenis_opts
-    pasar_selected = request.GET.getlist("pasar")
+    # # ===== SELECTED FILTER =====
+    # tahun_selected = safe_int_list(request.GET.getlist("tahun")) or [int(x) for x in tahun_opts]
+    # cabang_selected = request.GET.getlist("cabang") or cabang_opts
+    # jenis_selected = request.GET.getlist("jenis") or jenis_opts
+    # pasar_selected = request.GET.getlist("pasar")
 
+    # # ===== APPLY FILTER =====
+    # qs = base_qs
+    # if tahun_selected:
+    #     qs = qs.filter(tahun__in=tahun_selected)
+    # if cabang_selected:
+    #     qs = qs.filter(cabang__in=cabang_selected)
+    # if jenis_selected:
+    #     qs = qs.filter(jenis_tagihan__in=jenis_selected)
+    # if pasar_selected:
+    #     qs = qs.filter(nama_pasar__in=pasar_selected)
+
+    # ===== SELECTED FILTER (dibaca dulu, sebelum hitung opsi) =====
+    tahun_selected_raw = safe_int_list(request.GET.getlist("tahun"))
+    cabang_selected_raw = [v for v in request.GET.getlist("cabang") if v != ""]
+    jenis_selected_raw = [v for v in request.GET.getlist("jenis") if v != ""]
+    pasar_selected_raw = [v for v in request.GET.getlist("pasar") if v != ""]
+    
+    # ===== BASE UNTUK OPSI (dipakai menghitung daftar pilihan tiap filter) =====
+    # Opsi tiap filter dihitung dari base_qs yang SUDAH difilter oleh
+    # filter LAIN (bukan filter dirinya sendiri), lalu digabung dengan
+    # nilai yang sedang dipilih user agar centang tidak hilang.
+    def _opts_with_selected(option_qs, field, selected_values):
+        """Ambil nilai distinct + pastikan nilai yang sedang dipilih tetap muncul."""
+        values = list(
+            option_qs.exclude(**{f"{field}__isnull": True})
+            .exclude(**{field: ""})
+            .values_list(field, flat=True)
+            .distinct()
+            .order_by(field)
+        )
+        # Pastikan nilai yang sedang dipilih tetap ada di daftar opsi
+        existing = set(values)
+        for val in selected_values:
+            if val not in existing:
+                values.append(val)
+        # Urutkan ulang (khusus tahun: numerik)
+        if field == "tahun":
+            values = sorted(values, key=lambda x: (x is None, x))
+        else:
+            values = sorted(values)
+        return values
+    
+    
+    # --- Opsi Tahun: hanya dipengaruhi Cabang, Jenis, Pasar ---
+    opts_qs_tahun = base_qs
+    if cabang_selected_raw:
+        opts_qs_tahun = opts_qs_tahun.filter(cabang__in=cabang_selected_raw)
+    if jenis_selected_raw:
+        opts_qs_tahun = opts_qs_tahun.filter(jenis_tagihan__in=jenis_selected_raw)
+    if pasar_selected_raw:
+        opts_qs_tahun = opts_qs_tahun.filter(nama_pasar__in=pasar_selected_raw)
+    tahun_opts = _opts_with_selected(opts_qs_tahun, "tahun", tahun_selected_raw)
+    
+    # --- Opsi Cabang: dipengaruhi Tahun, Jenis, Pasar ---
+    opts_qs_cabang = base_qs
+    if tahun_selected_raw:
+        opts_qs_cabang = opts_qs_cabang.filter(tahun__in=tahun_selected_raw)
+    if jenis_selected_raw:
+        opts_qs_cabang = opts_qs_cabang.filter(jenis_tagihan__in=jenis_selected_raw)
+    if pasar_selected_raw:
+        opts_qs_cabang = opts_qs_cabang.filter(nama_pasar__in=pasar_selected_raw)
+    cabang_opts = _opts_with_selected(opts_qs_cabang, "cabang", cabang_selected_raw)
+    
+    # --- Opsi Jenis Tagihan: dipengaruhi Tahun, Cabang, Pasar ---
+    opts_qs_jenis = base_qs
+    if tahun_selected_raw:
+        opts_qs_jenis = opts_qs_jenis.filter(tahun__in=tahun_selected_raw)
+    if cabang_selected_raw:
+        opts_qs_jenis = opts_qs_jenis.filter(cabang__in=cabang_selected_raw)
+    if pasar_selected_raw:
+        opts_qs_jenis = opts_qs_jenis.filter(nama_pasar__in=pasar_selected_raw)
+    jenis_opts = _opts_with_selected(opts_qs_jenis, "jenis_tagihan", jenis_selected_raw)
+    
+    # --- Opsi Pasar: dipengaruhi Tahun, Cabang, Jenis ---
+    opts_qs_pasar = base_qs
+    if tahun_selected_raw:
+        opts_qs_pasar = opts_qs_pasar.filter(tahun__in=tahun_selected_raw)
+    if cabang_selected_raw:
+        opts_qs_pasar = opts_qs_pasar.filter(cabang__in=cabang_selected_raw)
+    if jenis_selected_raw:
+        opts_qs_pasar = opts_qs_pasar.filter(jenis_tagihan__in=jenis_selected_raw)
+    pasar_opts = _opts_with_selected(opts_qs_pasar, "nama_pasar", pasar_selected_raw)
+    
+    # ===== SELECTED FILTER (final, dengan fallback ke semua opsi) =====
+    tahun_selected = tahun_selected_raw or [int(x) for x in tahun_opts]
+    cabang_selected = cabang_selected_raw or cabang_opts
+    jenis_selected = jenis_selected_raw or jenis_opts
+    pasar_selected = pasar_selected_raw  # pasar tetap "kosong = semua"
+    
     # ===== APPLY FILTER =====
     qs = base_qs
     if tahun_selected:
@@ -153,7 +242,7 @@ def index(request):
         qs = qs.filter(jenis_tagihan__in=jenis_selected)
     if pasar_selected:
         qs = qs.filter(nama_pasar__in=pasar_selected)
-
+    
     # ===== KPI =====
     total = qs.count()
     total_nilai = qs.aggregate(total=Coalesce(Sum("nilai"), Decimal("0")))["total"]
